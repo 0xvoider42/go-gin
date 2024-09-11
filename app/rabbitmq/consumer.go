@@ -2,6 +2,9 @@ package rabbitmq
 
 import (
 	"log"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/streadway/amqp"
 )
@@ -49,17 +52,29 @@ func StartConsumer() {
 			log.Printf("Received a message: %s", msg.Body)
 
 			processOrder(string(msg.Body))
+
+			if err := processOrder(string(msg.Body)); err != nil {
+				log.Printf("Failed to process order: %v", err)
+				// Implement retry logic or send to dead letter exchange
+			}
 		}
 	}()
 
 	// Log that the consumer has started and is waiting for messages
 	log.Println("Consumer started. Waiting for messages...")
-	// Block forever to keep the consumer running
-	select {}
+
+	// Handle graceful shutdown
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	<-sigChan
+	log.Println("Shutting down consumer...")
 }
 
-func processOrder(orderID string) {
+func processOrder(orderID string) error {
 	// Log the order being processed
 	log.Printf("Processing order: %s", orderID)
 	// Simulate order processing (e.g., saving to DB, external API call)
+
+	// Return an error if processing fails
+	return nil
 }

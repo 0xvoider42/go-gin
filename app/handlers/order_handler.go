@@ -1,9 +1,9 @@
 package handlers
 
 import (
-	"encoding/json"
 	"log"
 	"net/http"
+	"sync"
 
 	"go-gin/app/rabbitmq"
 
@@ -17,6 +17,10 @@ type Order struct {
 	MessageType string `json:"message_type"`
 }
 
+// Global map to store orders
+var orders = make(map[string]Order)
+var mu sync.Mutex
+
 func OrderHandler(c *gin.Context) {
 	var order Order
 
@@ -24,6 +28,11 @@ func OrderHandler(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request payload"})
 		return
 	}
+
+	// Save order to the global map
+	mu.Lock()
+	orders[order.ID] = order
+	mu.Unlock()
 
 	ch, conn, err := rabbitmq.ConnectRabbitMQ()
 	if err != nil {
@@ -52,83 +61,72 @@ func OrderHandler(c *gin.Context) {
 }
 
 func GetAllOrdersHandler(c *gin.Context) {
-	// Connect to RabbitMQ
-	ch, conn, err := rabbitmq.ConnectRabbitMQ()
+	mu.Lock()
+	defer mu.Unlock()
 
-	log.Println("1")
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to connect to RabbitMQ"})
-		return
-	}
-	defer conn.Close()
-	defer ch.Close()
-
-	log.Println("2")
-
-	// Declare the queue (assuming the queue name is "orders")
-	queue, err := ch.QueueDeclare(
-		"orders", // name
-		true,     // durable
-		false,    // delete when unused
-		false,    // exclusive
-		false,    // no-wait
-		nil,      // arguments
-	)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to declare queue"})
-		return
-	}
-
-	log.Println("3")
-
-	// Consume messages from the queue
-	msgs, err := ch.Consume(
-		queue.Name, // queue
-		"",         // consumer
-		true,       // auto-ack
-		false,      // exclusive
-		false,      // no-local
-		false,      // no-wait
-		nil,        // args
-	)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to consume messages"})
-		return
-	}
-
-	// Create a slice to hold the orders
-	var orders []Order
-
-	// Loop through the messages and append to orders slice
-	for msg := range msgs {
-		var order Order
-		if err := json.Unmarshal(msg.Body, &order); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse order message"})
-			return
-		}
-		orders = append(orders, order)
-	}
-
-	log.Println(orders)
-
-	// Return the list of orders
 	c.JSON(http.StatusOK, gin.H{"orders": orders})
 }
 
+// GetOrderHandler handles fetching a specific order by ID
 func GetOrderHandler(c *gin.Context) {
-	// Implement logic to get a specific order by ID
 	orderID := c.Param("id")
-	c.JSON(http.StatusOK, gin.H{"message": "Get order", "orderID": orderID})
+
+	mu.Lock()
+	order, exists := orders[orderID]
+	mu.Unlock()
+
+	if !exists {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Order not found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"order": order})
 }
 
+// UpdateOrderHandler handles updating a specific order by ID
 func UpdateOrderHandler(c *gin.Context) {
-	// Implement logic to update a specific order by ID
 	orderID := c.Param("id")
-	c.JSON(http.StatusOK, gin.H{"message": "Update order", "orderID": orderID})
+
+	var updatedOrder Order
+	if err := c.ShouldBindJSON(&updatedOrder); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request payload"})
+		return
+	}
+
+	mu.Lock()
+	order, exists := orders[orderID]
+	if exists {
+		// Update the order details
+		order.Item = updatedOrder.Item
+		order.Price = updatedOrder.Price
+		order.MessageType = updatedOrder.MessageType
+		orders[orderID] = order
+	}
+	mu.Unlock()
+
+	if !exists {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Order not found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Order updated", "order": order})
 }
 
+// DeleteOrderHandler handles deleting a specific order by ID
 func DeleteOrderHandler(c *gin.Context) {
-	// Implement logic to delete a specific order by ID
 	orderID := c.Param("id")
-	c.JSON(http.StatusOK, gin.H{"message": "Delete order", "orderID": orderID})
+
+	mu.Lock()
+	_, exists := orders[orderID]
+	if exists {
+		delete(orders, orderID)
+	}
+	mu.Unlock()
+
+	if !exists {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Order not found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Order deleted", "orderID": orderID})
 }
