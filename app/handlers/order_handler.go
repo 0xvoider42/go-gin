@@ -109,6 +109,22 @@ func UpdateOrderHandler(c *gin.Context) {
 		return
 	}
 
+	ch, conn, err := rabbitmq.ConnectRabbitMQ()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to connect to RabbitMQ"})
+		return
+	}
+	defer conn.Close()
+	defer ch.Close()
+
+	err = rabbitmq.PublishMessage(ch, order.ID, "update")
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to queue the order update"})
+		return
+	}
+
+	log.Printf("Order updated and queued: ID=%s, MessageType=%s", order.ID, "update")
+
 	c.JSON(http.StatusOK, gin.H{"message": "Order updated", "order": order})
 }
 
@@ -127,6 +143,22 @@ func DeleteOrderHandler(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Order not found"})
 		return
 	}
+
+	ch, conn, err := rabbitmq.ConnectRabbitMQ()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to connect to RabbitMQ"})
+		return
+	}
+	defer conn.Close()
+	defer ch.Close()
+
+	err = rabbitmq.PublishMessage(ch, orderID, "delete")
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to queue the order deletion"})
+		return
+	}
+
+	log.Printf("Order deleted and queued: ID=%s, MessageType=%s", orderID, "delete")
 
 	c.JSON(http.StatusOK, gin.H{"message": "Order deleted", "orderID": orderID})
 }
